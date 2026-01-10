@@ -1,0 +1,17 @@
+[gd_scene load_steps=4 format=3 uid="uid://c41id54i5smoa"]
+
+[ext_resource type="Script" uid="uid://c3lxsk8b7uvf8" path="res://src/MapMesh2D.cs" id="2_lnu2h"]
+[ext_resource type="Script" uid="uid://dkhw6da0lehdr" path="res://src/DebugCamera.cs" id="2_yqjtg"]
+[ext_resource type="Texture2D" uid="uid://ss8elog1as1d" path="res://media/map/provinces.bmp" id="3_lnu2h"]
+
+[node name="Game" type="Node2D"]
+
+[node name="Camera2D" type="Camera2D" parent="."]
+script = ExtResource("2_yqjtg")
+
+[node name="MapMesh2D" type="Node2D" parent="."]
+script = ExtResource("2_lnu2h")
+
+[node name="MapSprite" type="Sprite2D" parent="MapMesh2D"]
+show_behind_parent = true
+texture = ExtResource("3_lnu2h")

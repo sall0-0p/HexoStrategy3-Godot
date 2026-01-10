@@ -1,0 +1,15 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://dcrs430oqco2l"
+valid=false
+
+[deps]
+
+source_file="res://media/map/hoi4/definition.csv"
+
+[params]
+
+compress=true
+delimiter=0

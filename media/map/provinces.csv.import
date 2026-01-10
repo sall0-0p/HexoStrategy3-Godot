@@ -1,0 +1,15 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://6d2vl6omk2v7"
+valid=false
+
+[deps]
+
+source_file="res://media/map/provinces.csv"
+
+[params]
+
+compress=true
+delimiter=0
