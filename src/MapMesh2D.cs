@@ -1,15 +1,23 @@
+using System.Collections.Generic;
 using ColdStrategyDb.Modules.Map;
 using Godot;
 
 public partial class MapMesh2D : Node2D
 {
     private MapData _debugData;
+    private HashSet<Vector2> _debugNodes;
+    private List<Vector2[]> _debugBorders;
     public override void _Ready()
     {
         var image = GetNode<Sprite2D>("MapSprite").Texture.GetImage();
-        var data = MapScanner.Scan(image, 15f);
-        GD.Print(data.Borders.Count);
-        _DrawDebugLines(data);
+        var rawData = MapScanner.Scan(image);
+        _debugNodes = MapScanner.DebugNodes;
+        _debugBorders = MapScanner.DebugBorders;
+        
+        MapBuilder.BuildProvinces(rawData, this.GetCanvasItem());
+        // var parisData = rawData.Provinces[];
+        // GD.Print($"Neighbors: {parisData.Neighbors.Count}");
+        // RenderingServer.CanvasItemSetModulate(parisData.VisualRid, Colors.White);
     }
     
     private void _DrawDebugLines(MapData data)
@@ -28,8 +36,27 @@ public partial class MapMesh2D : Node2D
         
         foreach (var border in _debugData.Borders)
         {
-            if (border.Points.Length > 1)
-                DrawPolyline(border.Points, Colors.Red, 2.0f);
+            if (border.Path.Length > 1)
+                DrawPolyline(border.Path, Colors.Red, 2.0f);
+        }
+    
+        foreach (var node in _debugNodes)
+        {
+            var color = Colors.Black;
+            color.A = 0.5f;
+            DrawRect(new Rect2(node.X, node.Y, new Vector2(2, 2)), color);
+        }
+    
+        GD.Print(_debugBorders.Count);
+        foreach (var border in _debugBorders)
+        {
+            var color = Colors.Red;
+            color.A = 0.5f;
+    
+            foreach (var pixel in border)
+            {
+                DrawRect(new Rect2(pixel, new Vector2(1, 1)), color);
+            }
         }
     }
 }

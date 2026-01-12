@@ -13,5 +13,7 @@ script = ExtResource("2_yqjtg")
 script = ExtResource("2_lnu2h")
 
 [node name="MapSprite" type="Sprite2D" parent="MapMesh2D"]
+visible = false
 show_behind_parent = true
 texture = ExtResource("3_lnu2h")
+centered = false

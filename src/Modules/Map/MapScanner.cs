@@ -6,240 +6,155 @@ namespace ColdStrategyDb.Modules.Map;
 
 public static class MapScanner
 {
-    public static MapData Scan(Image image, float simplificationTolerance = 1.0f)
+    public static HashSet<Vector2> DebugNodes { get; private set; }
+    public static List<Vector2[]> DebugBorders { get; private set; }
+    public static MapData Scan(Image image, float simplificationTolerance = 1f)
     {
         var data = new MapData
         {
-            Width = image.GetWidth(),
-            Height = image.GetHeight()
+            Height = image.GetHeight(),
+            Width = image.GetWidth(), 
         };
-
-        var visitedEdges = new HashSet<long>();
-        var width = image.GetWidth();
-        var height = image.GetHeight();
         
-        for (var y = 0; y < height; y++ )
+        var nodes = GetSetOfNodes(image);
+        GD.Print($"[MapScanner] Found {nodes.Count} Junction Nodes.");
+        
+        var walker = new TopologyWalker(image, nodes);
+        var borders = walker.CollectBorders();
+        List<Vector2[]> rawBorders = [];
+
+        for (var i = 0; i < borders.Count; i++)
         {
-            for (var x = 0; x < width; x++ )
-            {
-                var currentColor = image.GetPixel(x, y);
-                if (x + 1 < width)
-                {
-                    if (currentColor != image.GetPixel(x + 1, y))
-                    {
-                        var startPos = new Vector2(x + 1, y);
-                        var startDir = new Vector2(0, 1);
-                        long hash = Walker.HashEdge(startPos, startDir);
-
-                        if (visitedEdges.Contains(hash)) continue;
-
-                        var walker = new Walker(image, visitedEdges);
-                        var rawPoints = walker.TraceBorder(startPos, startDir);
-
-                        if (rawPoints.Count <= 1) continue;
-                        var cleanPoints = SimplifyPath(rawPoints.ToArray(), simplificationTolerance);
-                        data.Borders.Add(new BorderData { Points = cleanPoints });
-                    }
-                }
-
-                if (y + 1 < height)
-                {
-                    if (currentColor == image.GetPixel(x, y + 1)) continue;
-                    var startPos = new Vector2(x, y + 1);
-                    var startDir = new Vector2(1, 0); // Right
-                    long hash = Walker.HashEdge(startPos, startDir);
-
-                    if (visitedEdges.Contains(hash)) continue;
-                    var walker = new Walker(image, visitedEdges);
-                    var rawPoints = walker.TraceBorder(startPos, startDir);
-                    
-                    if (rawPoints.Count <= 2) continue;
-                    var uniquePoints = RemoveConsecutiveDuplicates(rawPoints);
-
-                    // For closed loops: if first ≈ last, optionally remove last to avoid duplicate ends
-                    if (uniquePoints.Count >= 3 && uniquePoints[0] == uniquePoints[uniquePoints.Count - 1])
-                    {
-                        uniquePoints.RemoveAt(uniquePoints.Count - 1);
-                    }
-                    
-                    var cleanPoints = SimplifyPath(rawPoints.ToArray(), simplificationTolerance);
-                    data.Borders.Add(new BorderData { Points = cleanPoints });
-                }
-            }
+            var borderData = borders[i]; 
+            
+            var simplifiedPath = SimplifyBorder([..borderData.Path], simplificationTolerance).ToArray();
+            
+            borderData.Path = simplifiedPath;
+            borders[i] = borderData;
+            rawBorders.Add(simplifiedPath);
         }
         
-        GD.Print($"[MapScanner] Scan complete. Found {data.Borders.Count} borders.");
+        // 3. CRITICAL FIX: Actually store the data
+        data.Borders = borders;
+        
+        GD.Print($"[MapScanner] Traced {borders.Count} Raw Borders.");
+
+        DebugNodes = nodes;
+        DebugBorders = rawBorders;
+        
         return data;
     }
 
-    private class Walker(Image image, HashSet<long> sharedVisitedSet)
+    private static List<Vector2> SimplifyBorder(List<Vector2> pointList, float epsilon)
     {
-        private readonly Image _image = image;
-        private readonly HashSet<long> _visitedEdges = sharedVisitedSet;
-        
-        public List<Vector2> TraceBorder(Vector2 startPos, Vector2 startDir)
+        if (pointList == null || pointList.Count < 3) return pointList;
+
+        float dMax = 0f;
+        int index = 0;
+        int end = pointList.Count - 1;
+
+        // Find the point with the maximum distance
+        for (int i = 1; i < end; i++)
         {
-            var points = new List<Vector2>();
+            float d = GetPerpendicularDistance(pointList[i], pointList[0], pointList[end]);
+
+            if (d > dMax)
+            {
+                index = i;
+                dMax = d;
+            }
+        }
+
+        var resultList = new List<Vector2>();
+
+        // If max distance is greater than epsilon, recursively simplify
+        if (dMax > epsilon)
+        {
+            // Recursive call
+            var leftSide = pointList.GetRange(0, index + 1);
+            var rightSide = pointList.GetRange(index, pointList.Count - index);
+
+            var recResults1 = SimplifyBorder(leftSide, epsilon);
+            var recResults2 = SimplifyBorder(rightSide, epsilon);
+
+            // Merge results without LINQ
+            // 1. Add the first segment fully
+            resultList.AddRange(recResults1);
             
-            var currentPos = startPos;
-            var currentDir = startDir;
-            var initialPos = startPos;
-            var initialDir = startDir;
-
-            // Cache who owns the left/right sides so we detect Nodes
-            Color expectedLeft = GetPixelRelative(currentPos, currentDir, true);
-            Color expectedRight = GetPixelRelative(currentPos, currentDir, false);
-
-            var safety = 0;
-            while (safety < 20000)
-            {
-                safety++;
-                points.Add(currentPos);
-
-                // Mark current edge as visited
-                long hash = HashEdge(currentPos, currentDir);
-                if (!_visitedEdges.Add(hash)) break; // Merge into existing line
-
-                // Look Ahead
-                var nextPos = currentPos + currentDir;
-                Color nextLeft = GetPixelRelative(nextPos, currentDir, true);
-                Color nextRight = GetPixelRelative(nextPos, currentDir, false);
-
-                var turned = false;
-
-                // Decision Logic (Hand-on-Wall)
-                if (nextLeft != expectedLeft)
-                {
-                    currentDir = RotateVector(currentDir, -90); // Turn Left
-                    turned = true;
-                }
-                else if (nextRight == expectedLeft)
-                {
-                    currentDir = RotateVector(currentDir, 90); // Turn Right
-                    turned = true;
-                }
-                else
-                {
-                    currentPos = nextPos; // Move Forward
-                }
-
-                // Stop: Closed Loop
-                if (currentPos == initialPos && currentDir == initialDir && safety > 1)
-                {
-                    points.Add(initialPos); // Close the loop visually
-                    break;
-                }
-            }
-
-            return points;
-        }
-        
-        public static long HashEdge(Vector2 pos, Vector2 dir)
-        {
-            int px = (int)pos.X;
-            int py = (int)pos.Y;
-            int dx = (int)dir.X;
-            int dy = (int)dir.Y;
-
-            if (dx != 0) // Horizontal edge
-            {
-                int edgeX = dx > 0 ? px : px - 1; // Always the left-side x
-                int edgeY = py;
-                return ((long)edgeX << 32) | (uint)edgeY; // No distinguishing bit needed
-            }
-            else // Vertical edge (dy != 0)
-            {
-                int edgeX = px;
-                int edgeY = dy > 0 ? py : py - 1; // Always the bottom-side y
-                return (1L << 63) | ((long)edgeX << 32) | (uint)edgeY;
-            }
-        }
-        
-        private Color GetPixelRelative(Vector2 pos, Vector2 dir, bool isLeft)
-        {
-            var x = (int)pos.X;
-            var y = (int)pos.Y;
-            int px = x, py = y;
-
-            // ANCIENT RUNES BE LIKE
-            if (dir.X == 0 && dir.Y == -1) { px = isLeft ? x - 1 : x; py = y - 1; }      // UP
-            else if (dir.X == 0 && dir.Y == 1) { px = isLeft ? x : x - 1; py = y; }      // DOWN
-            else if (dir.X == 1 && dir.Y == 0) { px = x; py = isLeft ? y - 1 : y; }      // RIGHT
-            else if (dir.X == -1 && dir.Y == 0) { px = x - 1; py = isLeft ? y : y - 1; } // LEFT
-
-            if (px < 0 || px >= _image.GetWidth() || py < 0 || py >= _image.GetHeight()) 
-                return Colors.Black;
+            // 2. Remove the last point of the first segment because it is 
+            //    duplicated as the first point of the second segment.
+            resultList.RemoveAt(resultList.Count - 1);
             
-            return _image.GetPixel(px, py);
+            // 3. Add the second segment
+            resultList.AddRange(recResults2);
         }
-        
-        private Vector2 RotateVector(Vector2 v, int degrees)
+        else
         {
-            if (degrees == 90) return new Vector2(-v.Y, v.X);
-            if (degrees == -90) return new Vector2(v.Y, -v.X);
-            return v;
+            // Keep only the endpoints
+            resultList.Add(pointList[0]);
+            resultList.Add(pointList[end]);
         }
+
+        return resultList;
     }
-    
-    private static Vector2[] SimplifyPath(Vector2[] points, float tolerance)
+
+    private static float GetPerpendicularDistance(Vector2 point, Vector2 lineStart, Vector2 lineEnd)
     {
-        if (points.Length < 3) return points;
-        
-        var stack = new Stack<int>();
-        var keep = new bool[points.Length];
-        
-        keep[0] = true;
-        keep[points.Length - 1] = true;
-        stack.Push(points.Length - 1);
-        stack.Push(0);
-
-        while (stack.Count > 0)
+        if (lineStart == lineEnd)
         {
-            var first = stack.Pop();
-            var last = stack.Pop();
-            var maxDistSq = 0f;
-            var indexFarthest = 0;
-            
-            var lineStart = points[first];
-            var lineEnd = points[last];
-            var lineVec = lineEnd - lineStart;
-            var lineLenSq = lineVec.LengthSquared();
-
-            for (var i = first + 1; i < last; i++)
-            {
-                var p = points[i];
-                float distSq;
-                if (lineLenSq == 0) distSq = (p - lineStart).LengthSquared();
-                else
-                {
-                    var t = Mathf.Clamp(((p.X - lineStart.X) * lineVec.X + (p.Y - lineStart.Y) * lineVec.Y) / lineLenSq, 0f, 1f);
-                    distSq = (p - (lineStart + lineVec * t)).LengthSquared();
-                }
-
-                if (!(distSq > maxDistSq)) continue;
-                maxDistSq = distSq;
-                indexFarthest = i;
-            }
-
-            if (!(maxDistSq > tolerance * tolerance)) continue;
-            keep[indexFarthest] = true;
-            stack.Push(last);
-            stack.Push(indexFarthest);
-            stack.Push(indexFarthest);
-            stack.Push(first);
+            return point.DistanceTo(lineStart);
         }
+        
+        var numerator = Mathf.Abs((lineEnd.X - lineStart.X) * (lineStart.Y - point.Y) - (lineStart.X - point.X) * (lineEnd.Y - lineStart.Y));
+        var denominator = lineStart.DistanceTo(lineEnd);
 
-        return points.Where((t, i) => keep[i]).ToArray();
+        return numerator / denominator;
     }
-    
-    private static List<Vector2> RemoveConsecutiveDuplicates(List<Vector2> raw)
+
+    private static HashSet<Vector2> GetSetOfNodes(Image image)
     {
-        var cleaned = new List<Vector2>();
-        foreach (var p in raw)
+        var set = new HashSet<Vector2>();
+        var detectedColors = new HashSet<Color>();
+
+        for (var y = -1; y < image.GetHeight(); y++)
         {
-            if (cleaned.Count == 0 || p != cleaned[cleaned.Count - 1])
-                cleaned.Add(p);
+            for (var x = -1; x < image.GetWidth(); x++)
+            {
+                var topLeft = GetPixel(image, x, y);
+                var topRight = GetPixel(image, x+1, y);
+                var bottomLeft = GetPixel(image, x, y+1);
+                var bottomRight = GetPixel(image, x+1, y+1);
+                
+                var uniqueCount = 1;
+                if (topRight != topLeft) uniqueCount++;
+                if (bottomLeft != topLeft && bottomLeft != topRight) uniqueCount++;
+                if (bottomRight != topLeft && bottomRight != topRight && bottomRight != bottomLeft) uniqueCount++;
+                
+                var isCheckerboard = (bottomLeft == topRight) && 
+                                      (bottomRight == topLeft) && 
+                                      (topLeft != topRight);
+
+                if (uniqueCount > 2 || isCheckerboard)
+                {
+                    set.Add(new Vector2(x, y));
+                    detectedColors.Add(topLeft);
+                    detectedColors.Add(topRight);
+                    detectedColors.Add(bottomLeft);
+                    detectedColors.Add(bottomRight);
+                }
+            }
         }
-        return cleaned;
+
+        return set;
+    }
+
+    private static Color GetPixel(Image image, int x, int y)
+    {
+        if (x > image.GetWidth() - 1 || y > image.GetHeight() - 1 || x < 0 || y < 0)
+        {
+            return Colors.Black;
+        }
+
+        return image.GetPixel(x, y);
     }
 }

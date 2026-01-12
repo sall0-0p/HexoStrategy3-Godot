@@ -2,9 +2,9 @@ using Godot;
 
 namespace ColdStrategyDb.Modules.Map;
 
-public class BorderData
+public struct BorderData
 {
-    public Color ProvinceA { get; set; }
-    public Color ProvinceB { get; set; }
-    public Vector2[] Points { get; set; }
+    public Color ColorLeft { get; set; }
+    public Color ColorRight { get; set; }
+    public Vector2[] Path { get; set; }
 }
